@@ -165,6 +165,10 @@ After Phase 0 completes, add generated data to the dataset pool for Phase 3 sele
 
    > GRPO tip: Rule-based rewards only (no neural reward model) — format + accuracy + CoT-length. Neural RMs get exploited at scale (DeepSeek-R1).
 
+4. **Training interface**:
+   - A) **Unsloth Studio** (GUI / web UI) — generates a step-by-step UI guide instead of Python scripts
+   - B) **CLI / scripts** — generates runnable `train_sft.py`, `train_dpo.py` etc. (default)
+
 ---
 
 ## PHASE 3 — Dataset Selection
@@ -238,7 +242,8 @@ Present top 3–5 datasets with research citations. For each, show: HF ID, langu
    - C) 80/20 random split
 
 **Research-backed preprocessing notes** (display to user):
-- Curriculum ordering (Meerkat 2025): if mixing datasets, order easy → hard within trainer
+- Curriculum ordering (Meerkat 2025): easy → hard ordering improves convergence. If mixing datasets in one run (CLI), concatenate easy-tier first. If training sequentially (Studio), train easy-tier dataset first — same principle, different mechanism.
+- Deduplication is only relevant within a single dataset or when concatenating multiple datasets in one run. Sequential training (one dataset at a time) does not require cross-dataset deduplication.
 - Official test splits must not be used for training (MedQA-USMLE, MedXpertQA, PubMedQA have official held-out sets)
 - For GRPO: CoT quality gate is critical — degenerate cold-start traces corrupt GRPO reward signals
 
@@ -247,6 +252,39 @@ See `references/phase-workflows.md` for format converter code.
 ---
 
 ## PHASE 5 — Config Generation (automated)
+
+**Branch on training interface selected in Phase 2:**
+
+- **CLI / scripts** → follow standard flow below, generate Python scripts
+- **Unsloth Studio** → skip Python scripts entirely; generate `UNSLOTH_STUDIO_GUIDE.md` instead (see "Studio Output" section below)
+
+---
+
+### Studio Output — `UNSLOTH_STUDIO_GUIDE.md`
+
+When the user chose Unsloth Studio, generate a UI field-by-field guide instead of scripts. The guide must cover:
+
+**Key Studio-specific facts** to include at the top:
+- Unsloth Studio cannot mix multiple datasets in one run — train one dataset at a time
+- After each dataset completes, use **"Merge & Save"** before starting the next — this merges the LoRA adapter into the base weights and creates a full model checkpoint. Do NOT skip this step.
+- The next training run should load the *merged* model as its starting point, not the original base model
+- When training datasets sequentially (not mixing), **no cross-dataset deduplication is needed**
+
+**Sequential training flow** — always show this diagram explicitly:
+```
+[Base model]
+    ↓ Train on Dataset 1 → Merge & Save → [model_v1]
+[model_v1]
+    ↓ Train on Dataset 2 → Merge & Save → [final_model]
+[final_model]
+    ↓ Train DPO (if applicable) → Merge & Save → [final_model_dpo]
+```
+
+For each training run in the guide, provide a table with every UI field and its value — model path, LoRA r/alpha, batch size, LR, epochs, etc. Don't leave the user guessing which field maps to which parameter.
+
+---
+
+### CLI Output — Standard scripts
 
 Read `references/phase-workflows.md` for templates. Auto-select model using:
 
