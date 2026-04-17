@@ -1,7 +1,6 @@
 ---
 name: medqa
-description: Interactive wizard for selecting medical LLM training datasets and generating complete Unsloth fine-tuning configurations (train.py, train_config.yaml, dataset_selection.md, README.md). Supports SFT, DPO, and GRPO methods with research-backed dataset recommendations. Optionally generates synthetic training data via distilabel.
-version: 1.0.0
+description: "Use this skill whenever a user wants to fine-tune or train a medical LLM — including USMLE prep, clinical reasoning, patient Q&A, clinical notes, drug info, or diagnosis tasks. Handles the full setup: research-backed dataset selection (MedCaseReasoning, MedQA-USMLE, MedXpertQA, MIMIC, etc.), training method recommendation (SFT, DPO, or GRPO with curriculum), and generating complete runnable Unsloth scripts (train.py, train_config.yaml, dataset_selection.md, README.md). Also triggers when the user asks which medical datasets to use for fine-tuning, wants a GRPO reward function for medical MCQ, needs a distilabel pipeline to generate synthetic medical QA from their own documents, or mentions Unsloth + medical in the same context. Use even if the user does not say 'dataset selection' — any medical LLM training setup request should use this skill."
 allowed-tools: AskUserQuestion, Read, Write, WebSearch, Bash
 ---
 
@@ -46,7 +45,12 @@ Scan the `/medqa` invocation arguments for these recognized keys:
 
 ## PHASE 0 — Synthetic Data Generation (OPTIONAL)
 
-**Trigger**: user has proprietary documents (PDFs, textbooks, clinical guidelines) OR explicitly sets `Generate: yes`.
+**Trigger**: enter Phase 0 when ANY of these are true:
+- Inline param `Generate: yes`
+- User mentions their own documents — phrases like "my PDFs", "my textbooks", "our clinical guidelines", "hospital protocols", "proprietary data", "internal documents", "my own data"
+- User asks to "generate" or "create" training data from source material they have
+
+If the invocation has no arguments (bare `/medqa`) and no document mentions, skip Phase 0 — don't ask about it unless the user brings it up.
 
 ### Auto-detect teacher model (NO user question needed)
 
@@ -251,6 +255,17 @@ Apply VRAM → config mapping from `references/phase-workflows.md`.
 ├── train_grpo.py           ← (GRPO method only; includes medical_reward_fn)
 └── README.md               ← setup instructions, eval recommendations
 ```
+
+### Syntax-check all generated Python scripts
+
+After writing every `.py` file, run:
+```bash
+python -m py_compile ./medqa-training/train_sft.py 2>&1 || true
+python -m py_compile ./medqa-training/train_dpo.py 2>&1 || true
+python -m py_compile ./medqa-training/train_grpo.py 2>&1 || true
+```
+
+If any file fails to parse, fix the syntax error before proceeding — this catches template substitution mistakes before the user hits them at runtime. Use `scripts/render_template.py` to re-render if needed.
 
 ### Final confirmation (1 AskUserQuestion)
 

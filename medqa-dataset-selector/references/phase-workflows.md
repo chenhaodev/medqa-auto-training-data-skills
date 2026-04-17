@@ -10,12 +10,14 @@ Reference for SKILL.md Phase 2, 4, and 5 logic.
 |------|-------------|----------------|-----------------|--------|-----------|-----------|
 | 8GB  | true  | 1024 | 1 | 8  | 16  | 8  |
 | 12GB | true  | 2048 | 2 | 16 | 32  | 4  |
-| 16GB | true  | 2048 | 4 | 16 | 32  | 4  |
+| 16GB | true  | 2048 | 2 | 16 | 32  | 4  |
+| 20GB+| true  | 4096 | 4 | 32 | 64  | 4  |
 | 24GB | true  | 4096 | 4 | 32 | 64  | 4  |
 | 40GB+| false | 4096 | 8 | 64 | 128 | 2  |
 
 **Rule**: `lora_alpha = lora_r * 2` (standard ratio).
 **Rule**: For Qwen3.5 on 8–16GB, LoRA 16-bit is preferred over QLoRA (Unsloth guidance: QLoRA not recommended for Qwen3.5).
+**16GB boundary**: Use `Qwen3.5-9B` (not 27B) for exactly 16GB — the 27B model needs 16–20GB at 4-bit and will OOM on a tight 16GB card.
 
 ---
 
@@ -23,13 +25,13 @@ Reference for SKILL.md Phase 2, 4, and 5 logic.
 
 | Use-case | Method | VRAM | Model HF ID |
 |----------|--------|------|------------|
-| USMLE/reasoning | SFT | ≤12GB | `unsloth/Qwen3.5-9B` |
-| USMLE/reasoning | SFT or GRPO | 16–24GB | `unsloth/Qwen3.5-27B` |
+| USMLE/reasoning | SFT | ≤16GB | `unsloth/Qwen3.5-9B` |
+| USMLE/reasoning | SFT or GRPO | 20–24GB | `unsloth/Qwen3.5-27B` |
 | Hard reasoning/GRPO | SFT→GRPO | 8–16GB | `unsloth/Qwen3.5-9B` (Phase A cold start) |
-| Patient Q&A | SFT | ≤12GB | `unsloth/gemma-4-E4B` |
-| Patient Q&A | SFT | 16GB+ | `unsloth/gemma-4-27b-it` |
+| Patient Q&A | SFT | ≤16GB | `unsloth/gemma-4-E4B` |
+| Patient Q&A | SFT | 20GB+ | `unsloth/gemma-4-27b-it` |
 | Multilingual | SFT | any | `unsloth/Qwen3.5-9B` (201 langs, 262K ctx) |
-| Long-context EHR | SFT | 16GB+ | `unsloth/Qwen3.5-27B` (262K native context) |
+| Long-context EHR | SFT | 20GB+ | `unsloth/Qwen3.5-27B` (262K native context) |
 | Clinical notes / DPO | SFT→DPO | 24GB+ | `unsloth/Qwen3.5-27B` |
 | MoE (VRAM efficient) | SFT | 8–10GB | `unsloth/Qwen3.5-35B-A3B-GGUF` (3B active) |
 
