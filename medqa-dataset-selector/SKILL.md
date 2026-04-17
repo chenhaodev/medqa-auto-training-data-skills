@@ -266,9 +266,11 @@ When the user chose Unsloth Studio, generate a UI field-by-field guide instead o
 
 **Key Studio-specific facts** to include at the top:
 - Unsloth Studio cannot mix multiple datasets in one run — train one dataset at a time
+- When training datasets sequentially (not mixing), **no cross-dataset deduplication is needed**
 - After each dataset completes, use **"Merge & Save"** before starting the next — this merges the LoRA adapter into the base weights and creates a full model checkpoint. Do NOT skip this step.
 - The next training run should load the *merged* model as its starting point, not the original base model
-- When training datasets sequentially (not mixing), **no cross-dataset deduplication is needed**
+
+**How to verify a correct merge**: if the export directory contains BOTH a large `model.safetensors` AND `adapter_config.json`, Unsloth Studio saved both together. The merge happened, but loading this directory as-is will cause Unsloth to re-apply the adapter and error with `RuntimeError: Unsloth: You already added LoRA adapters to your model!`. The fix is to copy the model to a clean directory without the adapter files.
 
 **Sequential training flow** — always show this diagram explicitly:
 ```
