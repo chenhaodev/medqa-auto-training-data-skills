@@ -1,7 +1,8 @@
 # Medical Dataset Catalog
 
-Research-validated datasets for medical LLM fine-tuning. Organized by quality tier.
-Last updated: April 2026.
+A curated **starting point** for medical LLM fine-tuning — not an exhaustive or always-current list. Use as a seed: verify freshness and search for language-native alternatives before finalizing recommendations. HuggingFace moves fast and better datasets appear regularly.
+
+Last catalog review: April 2026. Each entry has a `Last verified` date — treat entries older than ~18 months as leads to investigate, not prescriptions to follow blindly.
 
 ---
 
@@ -13,11 +14,13 @@ Highest training signal. Small but potent — research shows these outperform 10
 - **HF ID**: `zou-lab/MedCaseReasoning`
 - **Size**: 14K train / 2K test (official split)
 - **Best for**: Diagnostic reasoning, CoT training, SFT cold start for GRPO
+- **Language**: English
 - **Avg length**: ~600 tokens per example
 - **Research backing**: Stanford arXiv 2025 — +29% diagnostic accuracy, +41% reasoning recall over baseline
 - **Format**: Clinical case narrative + step-by-step diagnosis with differential reasoning
 - **License**: CC BY 4.0 (open)
-- **Notes**: Use official test split for fair evaluation. Apply CoT quality gate (filter traces < 100 tokens).
+- **Last verified**: April 2026
+- **Notes**: Use official test split for fair evaluation. Apply CoT quality gate (filter traces < 100 tokens). No Chinese equivalent known as of April 2026 — English reasoning signal still valuable for cross-lingual transfer.
 
 ### MedXpertQA
 - **HF ID**: `TsinghuaC3I/MedXpertQA`
@@ -65,11 +68,13 @@ Well-studied, high-quality, commonly used as baselines.
 - **HF ID**: `FreedomIntelligence/medical-o1-reasoning-SFT`
 - **Size**: 50K examples
 - **Best for**: CoT reasoning training, SFT cold start for GRPO, reasoning trace quality
+- **Language**: English
 - **Avg length**: ~800 tokens (Meerkat-style long reasoning)
 - **Research backing**: Meerkat (npj Digital Medicine 2025) — chain-of-thought from authoritative sources outperformed counterparts by 22.3% on 6 exam datasets
 - **Format**: Question + long-form CoT reasoning trace + final answer
 - **License**: Apache 2.0
-- **Notes**: Apply CoT quality gate before SFT cold start. Excellent for generating `<think>...</think>` patterns.
+- **Last verified**: April 2026
+- **Notes**: Apply CoT quality gate before SFT cold start. Excellent for generating `<think>...</think>` patterns. **Chinese users**: search HuggingFace for `FreedomIntelligence/Medical-R1-Distill-Data-Chinese` or similar — the same team has released Chinese versions; verify current availability.
 
 ### PubMedQA
 - **HF ID**: `qiaojin/PubMedQA`
@@ -170,6 +175,8 @@ Use these for model evaluation after training — do not include in training dat
 ---
 
 ## Research-Backed Combinations
+
+> These combinations were validated as of April 2026. For non-English use cases, replace English datasets with language-native equivalents found via WebSearch before adopting these combinations.
 
 | Goal | Primary Dataset | Secondary | Method | Expected Gain |
 |------|----------------|-----------|--------|---------------|

@@ -169,12 +169,31 @@ After Phase 0 completes, add generated data to the dataset pool for Phase 3 sele
 
 ## PHASE 3 — Dataset Selection
 
+### Step 3a — Freshness & Language Check (do this BEFORE reading catalog)
+
+The dataset catalog is a curated starting point, not a live index. Before recommending from it:
+
+**If Language is NOT English** (Chinese, Japanese, Arabic, etc.):
+1. Run a WebSearch: `"{language} medical LLM fine-tuning dataset huggingface 2025 2026"`
+2. Check for language-native alternatives to every catalog recommendation — native-language datasets nearly always outperform translated or cross-lingual ones for non-English inference
+3. Prefer datasets published in the last 12 months where available
+4. Present discovered datasets alongside catalog options, clearly labeling which are native-language
+
+**For any language** (including English):
+- Scan catalog entry dates — entries marked older than ~18 months may have been superseded
+- If the catalog's top recommendation for a use-case is from 2023 or earlier, do a quick WebSearch to check for newer alternatives: `"medical reasoning dataset huggingface {year}"`
+- You don't need to search for every dataset — use judgment. Hard reasoning datasets (Tier 1) change less often; broad instruction-tuning datasets turn over faster.
+
+The goal is to not silently hand the user a stale list. If the catalog is current enough, say so and proceed. If you found better options, surface them.
+
+### Step 3b — Filter and recommend
+
 Read `references/dataset-catalog.md`. Filter by:
 - Method (SFT → any tier; DPO → prefer Tier 1+2 with rich reasoning; GRPO → requires answer keys)
 - Use-case (clinical notes → Tier 4; patient Q&A → Tier 3; reasoning → Tier 1)
 - Difficulty tier (standard → Tier 2; complex/expert → Tier 1; EHR → Tier 4)
 
-Present top 3–5 datasets with research citations. Show expected performance gains where available.
+Present top 3–5 datasets with research citations. For each, show: HF ID, language, last-verified date, and expected performance gain where available. Flag any English-only dataset being recommended to a non-English user.
 
 **MIMIC gating logic** (mandatory check):
 - If clinical notes or EHR use-case → ask: "Do you have PhysioNet credentialing and have signed the MIMIC Data Use Agreement?"
