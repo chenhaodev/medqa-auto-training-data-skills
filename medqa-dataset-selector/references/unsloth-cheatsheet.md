@@ -161,6 +161,22 @@ model.push_to_hub_gguf(
 # Push LoRA adapter to HuggingFace Hub
 model.push_to_hub("your-hf-username/model-name", token="hf_...")
 tokenizer.push_to_hub("your-hf-username/model-name", token="hf_...")
+
+# Merge LoRA adapter into base and push merged model to HuggingFace Hub
+# Use this when base model = LoRA repo (Unsloth Studio error: "already added LoRA adapters")
+from unsloth import FastModel
+
+model, tokenizer = FastModel.from_pretrained(
+    model_name = "your-hf-username/your-model-lora",
+    max_seq_length = 2048,
+    load_in_4bit = False,  # must be False for merging
+)
+
+model.push_to_hub_merged(
+    "your-hf-username/your-model-merged",
+    tokenizer,
+    token = "hf_...",
+)
 ```
 
 **GGUF quantization choice guide**:
