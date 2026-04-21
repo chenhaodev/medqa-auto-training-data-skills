@@ -222,7 +222,103 @@ Present top 3–5 datasets with research citations. For each, show: HF ID, langu
 
 ## PHASE 4 — Data Quality & Preprocessing
 
-### Phase 4 Questions (1 batched AskUserQuestion, 3 questions)
+**Branch on training interface from Phase 2:**
+
+---
+
+### CLI path — Automated pipeline (no user questions)
+
+For CLI output, **never ask the user about format or cleaning** — detect and apply the full pipeline programmatically. The pipeline runs in this fixed order:
+
+#### 1. Auto-detect format from column names
+
+```python
+def detect_format(ds):
+    cols = set(ds.column_names)
+    if "case_presentation" in cols:              return "medcase"
+    if "conversations" in cols:                  return "sharegpt"
+    if "messages" in cols:                       return "chatml"
+    if "instruction" in cols:                    return "alpaca"
+    if "question" in cols and "options" in cols: return "medqa"
+    raise ValueError(f"Unknown format. Columns: {sorted(cols)}")
+```
+
+#### 2. Normalize all formats to `[{role, content}, …]` conversations
+
+- Inject `SYSTEM_PROMPT` describing the training domain into every conversation
+- ShareGPT: use `standardize_sharegpt` from `unsloth.chat_templates`
+- Alpaca: map `instruction`/`input`/`output` → user/assistant turns
+- MedCase: wrap `case_presentation` as user; `<think>{reasoning}</think><answer>{diagnosis}</answer>` as assistant
+- ChatML/messages: pass through directly
+
+#### 3. Pool all datasets before selection
+
+Never select from each dataset separately. Merge all normalized conversations into a single pool first, then apply dedup + selection to the unified pool.
+
+#### 4. Dedup by MD5 of the last user turn (cross-dataset)
+
+```python
+key = last_user_message.lower().strip()
+h = hashlib.md5(key.encode()).hexdigest()
+```
+
+#### 5. Quality filter (always applied)
+
+Drop examples where:
+- User turn < 20 words
+- `<think>` trace is present but < 50 words (degenerate CoT)
+- Tokenized length > 90% × `MAX_SEQ_LENGTH` (would be truncated mid-reasoning)
+
+#### 6. Score each example for difficulty
+
+```
+score = min(cot_words/100, 3.0)   # CoT length in <think> block
+      + 1.0 if has <think> tags    # reasoning format present
+      + min(user_words/200, 1.0)   # user turn complexity
+```
+
+#### 7. Hard-biased stratified selection
+
+Select `n_target` examples with quartile budget:
+
+| Quartile | Difficulty | Share |
+|----------|-----------|-------|
+| Q4 | Hardest | 40% |
+| Q3 | Hard | 30% |
+| Q2 | Medium | 20% |
+| Q1 | Easiest | 10% |
+
+Rationale: MedCaseReasoning (14K hard cases) → +29% over equal mixing. Hard-bias is research-validated.
+
+#### 8. Curriculum sort: ascending difficulty
+
+Sort selected pool by score ascending before `apply_chat_template` — easy examples first, hard last. SFT trainer sees easy→hard naturally.
+
+#### 9. Apply chat template
+
+```python
+texts = tokenizer.apply_chat_template(pool, tokenize=False)
+```
+
+#### GRPO-specific additions
+
+- Filter questions < 20 words and options < 3 chars per option
+- Compute actual prompt token lengths; filter to 90th percentile
+- Set `max_prompt_length = p90_token_count + 1` (dynamic, not a hardcoded constant)
+- Phase B: cross-dataset dedup, then mix 30% USMLE + 70% MedMCQA clinical subjects
+
+MedMCQA clinical subjects (Phase B only — exclude preclinical):
+```python
+CLINICAL_SUBJECTS = {
+    "Medicine", "Surgery", "Gynaecology & Obstetrics", "Pediatrics",
+    "Psychiatry", "Ophthalmology", "ENT", "Anaesthesia",
+    "Radiology", "Pathology", "Microbiology",
+}
+```
+
+---
+
+### Studio path — Manual questions (3 questions)
 
 1. **Format conversion**:
    - A) Auto-detect and convert to ChatML (recommended)
@@ -232,20 +328,19 @@ Present top 3–5 datasets with research citations. For each, show: HF ID, langu
 2. **Cleaning steps** (multi-select):
    - A) Deduplication (MD5 on instruction field)
    - B) Length filter (remove <20 tokens, remove >`max_seq_length * 0.9` tokens)
-   - C) CoT quality gate (filter reasoning traces < 100 tokens — removes degenerate traces)
+   - C) CoT quality gate (filter reasoning traces < 100 tokens)
    - D) PII scrub (basic pattern matching for names, DOB, MRN)
    - E) None — use raw data
 
 3. **Train/eval split**:
-   - A) Use official splits (recommended where available: MedQA-USMLE, PubMedQA, MedCaseReasoning)
+   - A) Use official splits (recommended: MedQA-USMLE, PubMedQA, MedCaseReasoning)
    - B) 90/10 random split
    - C) 80/20 random split
 
-**Research-backed preprocessing notes** (display to user):
-- Curriculum ordering (Meerkat 2025): easy → hard ordering improves convergence. If mixing datasets in one run (CLI), concatenate easy-tier first. If training sequentially (Studio), train easy-tier dataset first — same principle, different mechanism.
-- Deduplication is only relevant within a single dataset or when concatenating multiple datasets in one run. Sequential training (one dataset at a time) does not require cross-dataset deduplication.
-- Official test splits must not be used for training (MedQA-USMLE, MedXpertQA, PubMedQA have official held-out sets)
-- For GRPO: CoT quality gate is critical — degenerate cold-start traces corrupt GRPO reward signals
+**Notes for Studio path**:
+- Curriculum ordering: train easy-tier datasets first, hard-tier second (sequential runs, same principle as CLI)
+- Sequential training does not require cross-dataset deduplication
+- Official test splits must not be used for training
 
 See `references/phase-workflows.md` for format converter code.
 
@@ -288,6 +383,118 @@ For each training run in the guide, provide a table with every UI field and its 
 
 ### CLI Output — Standard scripts
 
+#### Step A — Verify against official Unsloth notebooks (do this first)
+
+Before generating any script, fetch the relevant Python script from GitHub to check for API changes that would break generated code:
+
+```bash
+# GRPO reference:
+curl -s "https://raw.githubusercontent.com/unslothai/notebooks/main/python_scripts/Qwen3_(4B)-GRPO.py"
+# SFT reference:
+curl -s "https://raw.githubusercontent.com/unslothai/notebooks/main/python_scripts/Qwen3_(14B)-Reasoning-Conversational.py"
+```
+
+Cross-check against these known breaking changes from old templates:
+
+| Old pattern (wrong) | Correct (current) |
+|---|---|
+| `tokenizer=tokenizer` in GRPOTrainer | `processing_class=tokenizer` |
+| `load_in_4bit=True` for GRPO | `load_in_4bit=False` (LoRA 16-bit) |
+| no `fast_inference` | `fast_inference=True`, `max_lora_rank=LORA_R`, `gpu_memory_utilization=0.9` |
+| no `vllm_sampling_params` | `SamplingParams(...)` in GRPOConfig |
+| `warmup_steps=5` in GRPO | `warmup_ratio=0.1` |
+| `epsilon=0.2, epsilon_high=0.28` | removed (old API) |
+| `lr_scheduler_type="cosine"` | `"linear"` |
+| `weight_decay=0.01` | `0.001` |
+| completion as string | `completion[0]["content"]` (TRL 0.22.2 format) |
+| kwarg `answers` | `answer` (must match dataset column name exactly) |
+| no `os.environ["UNSLOTH_VLLM_STANDBY"]` | `os.environ["UNSLOTH_VLLM_STANDBY"] = "1"` at top |
+
+**Mandatory version pins** (add to every README):
+```bash
+pip install unsloth vllm              # vllm required for GRPO fast_inference
+pip install transformers==4.56.2
+pip install --no-deps trl==0.22.2
+```
+
+#### Step B — Always generate `train_utils.py` first
+
+`train_utils.py` is a required shared module. Generate it before any training script. It must contain exactly these four components:
+
+**1. `SmoothedLossCallback(beta=0.98, log_dir)`**
+- Fires on `on_log` — watches: `loss`, `eval_loss`, `reward`, `rewards/accuracy_reward`, `rewards/match_format_reward`, `rewards/cot_length_reward`, `kl`, `completion_length`
+- EMA with bias correction: `ema = beta*ema + (1-beta)*raw` → `corrected = ema / (1 - beta^step)`
+- Console display per step: `[  100] loss 1.8423→1.7234 | eval_loss 1.9234→1.9012`
+- Appends to `{log_dir}/loss_history.jsonl` for offline plotting
+- `on_train_end`: prints summary table (final + best per metric, with ↓/↑ direction)
+
+**2. `BestRewardCallback(patience)` — GRPO only**
+- Watches `reward` in logs
+- On improvement: prints `★ New best reward = X.XXXX at step N`, sets `control.should_save = True`
+
+**3. `add_export_args(parser)`**
+Adds these flags to any argparser:
+```
+--hub-id STR        HF repo prefix (e.g. "username/risk-model")
+--push-lora         Upload LoRA adapter to {hub-id}-lora
+--push-merged       Upload merged 16-bit to {hub-id}-merged
+--push-gguf         Upload GGUF to {hub-id}-gguf (also saves locally)
+--gguf-methods STR  Comma-separated quant methods (default: q4_k_m)
+--gguf-local        Save GGUF locally without hub upload
+--hf-token STR      HF token (or HF_TOKEN env var)
+--save-total INT    Max checkpoints to keep (default: 3)
+```
+
+**4. `export_model(model, tokenizer, output_dir, args)`**
+- Always saves merged 16-bit locally first
+- `--push-lora` → `model.push_to_hub("{hub-id}-lora", token=token)`
+- `--push-merged` → `model.push_to_hub_merged("{hub-id}-merged", ...)`
+- `--push-gguf` → `model.push_to_hub_gguf("{hub-id}-gguf", tokenizer, quantization_method=[...], token=token)`
+- Warns clearly if `--push-*` set without `--hub-id` or token
+
+#### Step C — Generate `train_sft.py`
+
+Must embed the full Phase 4 data pipeline as functions (`detect_format`, `normalize_to_conversations`, `dedup`, `quality_filter`, `score_difficulty`, `hard_biased_select`). Never hardcode per-dataset loading — the pipeline is generic.
+
+SFT trainer config additions vs old templates:
+```python
+callbacks=[SmoothedLossCallback(log_dir=out_dir)],
+args=SFTConfig(
+    evaluation_strategy="steps",
+    eval_steps=100,
+    save_strategy="steps",
+    save_steps=100,
+    save_total_limit=args.save_total,
+    load_best_model_at_end=True,      # disabled by --no-best
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+    padding_free=False,               # set True if >17GB VRAM free after model load
+    report_to="none",
+)
+```
+
+Replace final `save_pretrained_merged()` call with `export_model(model, tokenizer, args.output, args)`.
+
+#### Step D — Generate `train_grpo.py`
+
+Must embed Phase B mixing (30% USMLE + 70% MedMCQA clinical subjects) with cross-dataset dedup and dynamic `max_prompt_length` from p90 tokenized lengths.
+
+GRPO trainer additions:
+```python
+callbacks=[SmoothedLossCallback(log_dir=out_dir), BestRewardCallback()],
+args=GRPOConfig(
+    save_total_limit=args.save_total,
+    ...
+)
+```
+
+Use 3 separate reward functions — never one combined function:
+`match_format_reward`, `accuracy_reward`, `cot_length_reward` → passed as list to `reward_funcs=[...]`.
+
+Replace final save with `export_model(model, tokenizer, args.output, args)`.
+
+---
+
 Read `references/phase-workflows.md` for templates. Auto-select model using:
 
 | Use-case | Method | VRAM | Model |
@@ -319,12 +526,13 @@ Apply VRAM → config mapping from `references/phase-workflows.md`.
 
 After writing every `.py` file, run:
 ```bash
+python -m py_compile ./medqa-training/train_utils.py 2>&1 || true
 python -m py_compile ./medqa-training/train_sft.py 2>&1 || true
 python -m py_compile ./medqa-training/train_dpo.py 2>&1 || true
 python -m py_compile ./medqa-training/train_grpo.py 2>&1 || true
 ```
 
-If any file fails to parse, fix the syntax error before proceeding — this catches template substitution mistakes before the user hits them at runtime. Use `scripts/render_template.py` to re-render if needed.
+Fix any parse error before proceeding — template substitution mistakes surface here before the user hits them at runtime.
 
 ### Final confirmation (1 AskUserQuestion)
 
@@ -348,20 +556,32 @@ If any file fails to parse, fix the syntax error before proceeding — this catc
 - No `{placeholder}` tokens remaining
 - Commented with research rationale for key choices
 
+### `train_utils.py` (CLI method — always generated first)
+- `SmoothedLossCallback`: EMA-smoothed live display + JSONL log + end-of-training summary
+- `BestRewardCallback`: GRPO best-reward tracking with checkpoint trigger
+- `add_export_args(parser)`: shared `--hub-id`, `--push-lora/merged/gguf`, `--gguf-methods`, `--hf-token`, `--save-total` flags
+- `export_model(model, tokenizer, output_dir, args)`: local merged save + conditional HF push
+
 ### `train.py` / `train_sft.py`
-- Complete runnable script
-- Curriculum ordering (easy → hard dataset mixing)
-- `save_steps=100` and `resume_from_checkpoint=True` for spot instance safety
+- Full Phase 4 data pipeline embedded: `detect_format` → `normalize_to_conversations` → `dedup` → `quality_filter` → `score_difficulty` → `hard_biased_select` → curriculum sort → `apply_chat_template`
+- Best-checkpoint saving: `load_best_model_at_end=True`, `evaluation_strategy="steps"`, `save_total_limit`
+- `SmoothedLossCallback` in `callbacks=`
+- Ends with `export_model()` instead of bare `save_pretrained_merged()`
 
 ### `train_grpo.py` (GRPO method)
-- Two-stage: SFT cold start → GRPO
-- `medical_reward_fn` with format + accuracy + CoT-length rewards
-- Curriculum dataset loader: Phase A (MedQA-USMLE) → Phase B (+MedMCQA) → Phase C (+MedXpertQA)
+- Phase A: MedQA-USMLE with quality filter + complexity-scored subset
+- Phase B: 30% USMLE + 70% MedMCQA clinical subjects, cross-dataset dedup, dynamic `max_prompt_length` from p90
+- Three separate reward functions: `match_format_reward`, `accuracy_reward`, `cot_length_reward`
+- `SmoothedLossCallback` + `BestRewardCallback` in `callbacks=`
+- `os.environ["UNSLOTH_VLLM_STANDBY"] = "1"` at module top
+- `load_in_4bit=False`, `fast_inference=True`, `max_lora_rank`, `gpu_memory_utilization=0.9`
+- Ends with `export_model()`
 
 ### `README.md`
-- Prerequisites and install commands
+- Prerequisites: `pip install unsloth vllm`, `transformers==4.56.2`, `--no-deps trl==0.22.2`
 - HuggingFace login instructions (for gated datasets)
 - PhysioNet warning if MIMIC datasets included
+- Export/upload CLI reference table
 - RunPod quick-start link to `references/runpod-cheatsheet.md`
 - Eval recommendation: run `openai/healthbench` after training
 
@@ -375,3 +595,9 @@ If any file fails to parse, fix the syntax error before proceeding — this catc
 - **GRPO without answer keys**: Warn user that GRPO requires verifiable answer keys; suggest SFT→DPO instead
 - **distilabel not installed**: Show `pip install distilabel` command in generate.sh
 - **Transformers version (Qwen3.5)**: Qwen3.5 requires Transformers v5+; add version check in README
+- **`RuntimeError: Unsloth: You already added LoRA adapters`**: model dir has `adapter_config.json` alongside weights — copy to clean dir and remove adapter files before loading as base
+- **`processing_class` not accepted**: TRL version < 0.22.2; upgrade with `pip install --no-deps trl==0.22.2`
+- **`fast_inference` not accepted**: Unsloth version too old; re-install with `pip install unsloth vllm`
+- **GRPO OOM with `num_generations=4`**: Reduce to 2, or reduce `max_completion_length`
+- **Unknown dataset format**: `detect_format()` raises `ValueError` with column list — inspect the dataset schema and add a custom normalizer branch
+- **HF upload fails without token**: Check `HF_TOKEN` env var or pass `--hf-token`
